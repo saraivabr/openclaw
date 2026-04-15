@@ -1,0 +1,28 @@
+{
+  "name": "@openclaw/meta-messenger",
+  "version": "2026.4.15",
+  "private": true,
+  "description": "OpenClaw Facebook Messenger + Instagram DMs channel plugin (Meta Graph API)",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "setupEntry": "./setup-entry.ts",
+    "channel": {
+      "id": "meta-messenger",
+      "label": "Meta Messenger / Instagram",
+      "selectionLabel": "Messenger + Instagram (Meta Graph API)",
+      "docsPath": "/channels/meta-messenger",
+      "docsLabel": "meta-messenger",
+      "blurb": "Facebook Messenger and Instagram DMs via Meta Graph API webhook.",
+      "order": 76,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@openclaw/meta-messenger",
+      "localPath": "extensions/meta-messenger",
+      "defaultChoice": "npm"
+    }
+  }
+}
