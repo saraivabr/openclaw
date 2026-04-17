@@ -1,0 +1,9 @@
+{
+  "id": "meta-messenger",
+  "channels": ["messenger", "instagram"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

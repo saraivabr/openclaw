@@ -1,0 +1,30 @@
+{
+  "identity": {
+    "name": "Ana",
+    "emoji": "🏠",
+    "bio": "Consultora imobiliária — qualifica leads e agenda visitas"
+  },
+  "messages": {
+    "requireMention": false
+  },
+  "channels": {
+    "whatsapp": {
+      "enabled": true,
+      "allowFrom": ["*"],
+      "dmPolicy": "open"
+    },
+    "meta-messenger": {
+      "enabled": true,
+      "pageAccessToken": "${META_PAGE_ACCESS_TOKEN}",
+      "webhookVerifyToken": "${META_WEBHOOK_VERIFY_TOKEN}",
+      "appSecret": "${META_APP_SECRET}",
+      "allowFrom": ["*"],
+      "dmPolicy": "open"
+    }
+  },
+  "agents": {
+    "default": {
+      "skills": ["sdr-imoveis"]
+    }
+  }
+}

@@ -3,34 +3,34 @@ name: "Copilot Setup Steps"
 # Run automatically when this file changes (validates the setup), and allow
 # manual runs from the Actions tab.
 on:
-    workflow_dispatch:
-    push:
-        paths:
-            - .github/workflows/copilot-setup-steps.yml
-    pull_request:
-        paths:
-            - .github/workflows/copilot-setup-steps.yml
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
 
 jobs:
-    # Job name MUST be `copilot-setup-steps` — Copilot cloud agent looks for it.
-    copilot-setup-steps:
-        runs-on: ubuntu-latest
+  # Job name MUST be `copilot-setup-steps` — Copilot cloud agent looks for it.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
 
-        permissions:
-            contents: read
+    permissions:
+      contents: read
 
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v6
-              with:
-                  submodules: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          submodules: false
 
-            - name: Setup Node, pnpm, Bun and install dependencies
-              uses: ./.github/actions/setup-node-env
-              with:
-                  node-version: "24.x"
-                  pnpm-version: "10.23.0"
-                  install-bun: "true"
-                  install-deps: "true"
-                  frozen-lockfile: "true"
-                  use-sticky-disk: "false"
+      - name: Setup Node, pnpm, Bun and install dependencies
+        uses: ./.github/actions/setup-node-env
+        with:
+          node-version: "24.x"
+          pnpm-version: "10.23.0"
+          install-bun: "true"
+          install-deps: "true"
+          frozen-lockfile: "true"
+          use-sticky-disk: "false"
