@@ -18,8 +18,77 @@ type AuditFixture = {
 const OPENAI_API_KEY_MARKER = "OPENAI_API_KEY"; // pragma: allowlist secret
 const MAX_AUDIT_MODELS_JSON_BYTES = 5 * 1024 * 1024;
 
+function countNonEmptyLines(value: string): number {
+  let count = 0;
+  for (const line of value.split("\n")) {
+    if (line.trim().length > 0) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function writeExecResolverShellScript(params: {
+  scriptPath: string;
+  logPath: string;
+  values: Record<string, string>;
+}) {
+  await fs.writeFile(
+    params.scriptPath,
+    [
+      "#!/bin/sh",
+      `printf 'x\\n' >> ${JSON.stringify(params.logPath)}`,
+      "cat >/dev/null",
+      `printf '${JSON.stringify({ protocolVersion: 1, values: params.values }).replaceAll("'", "'\\''")}'`, // pragma: allowlist secret
+    ].join("\n"),
+    { encoding: "utf8", mode: 0o700 },
+  );
+}
+
+async function writeExecSecretsAuditConfig(params: {
+  fixture: AuditFixture;
+  execScriptPath: string;
+  providers: Array<{
+    id: string;
+    baseUrl: string;
+    modelId: string;
+    modelName: string;
+  }>;
+}) {
+  await writeJsonFile(params.fixture.configPath, {
+    secrets: {
+      providers: {
+        execmain: {
+          source: "exec",
+          command: params.execScriptPath,
+          jsonOnly: true,
+          timeoutMs: 20_000,
+          noOutputTimeoutMs: 10_000,
+        },
+      },
+    },
+    models: {
+      providers: Object.fromEntries(
+        params.providers.map((provider) => [
+          provider.id,
+          {
+            baseUrl: provider.baseUrl,
+            api: "openai-completions",
+            apiKey: {
+              source: "exec",
+              provider: "execmain",
+              id: `providers/${provider.id}/apiKey`,
+            },
+            models: [{ id: provider.modelId, name: provider.modelName }],
+          },
+        ]),
+      ),
+    },
+  });
 }
 
 function resolveRuntimePathEnv(): string {
@@ -161,8 +230,12 @@ describe("secrets audit", () => {
     expect(report.status).toBe("findings");
     expect(report.summary.plaintextCount).toBeGreaterThan(0);
     expect(report.summary.shadowedRefCount).toBeGreaterThan(0);
-    expect(hasFinding(report, (entry) => entry.code === "REF_SHADOWED")).toBe(true);
-    expect(hasFinding(report, (entry) => entry.code === "PLAINTEXT_FOUND")).toBe(true);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "REF_SHADOWED" }),
+        expect.objectContaining({ code: "PLAINTEXT_FOUND" }),
+      ]),
+    );
   });
 
   it("does not mutate legacy auth.json during audit", async () => {
@@ -175,8 +248,11 @@ describe("secrets audit", () => {
     });
 
     const report = await runSecretsAudit({ env: fixture.env });
-    expect(hasFinding(report, (entry) => entry.code === "LEGACY_RESIDUE")).toBe(true);
-    await expect(fs.stat(fixture.authJsonPath)).resolves.toBeTruthy();
+    expect(report.findings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: "LEGACY_RESIDUE" })]),
+    );
+    const authJsonStat = await fs.stat(fixture.authJsonPath);
+    expect(authJsonStat.isFile()).toBe(true);
     await expect(fs.stat(fixture.authStorePath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -185,69 +261,94 @@ describe("secrets audit", () => {
     await fs.writeFile(fixture.authJsonPath, "{invalid-json", "utf8");
 
     const report = await runSecretsAudit({ env: fixture.env });
-    expect(hasFinding(report, (entry) => entry.file === fixture.authStorePath)).toBe(true);
-    expect(hasFinding(report, (entry) => entry.file === fixture.authJsonPath)).toBe(true);
-    expect(hasFinding(report, (entry) => entry.code === "REF_UNRESOLVED")).toBe(true);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: fixture.authStorePath }),
+        expect.objectContaining({ file: fixture.authJsonPath }),
+        expect.objectContaining({ code: "REF_UNRESOLVED" }),
+      ]),
+    );
   });
 
-  it("batches ref resolution per provider during audit", async () => {
+  it("skips exec ref resolution during audit unless explicitly allowed", async () => {
     if (process.platform === "win32") {
       return;
     }
-    const execLogPath = path.join(fixture.rootDir, "exec-calls.log");
-    const execScriptPath = path.join(fixture.rootDir, "resolver.sh");
-    await fs.writeFile(
+    const execLogPath = path.join(fixture.rootDir, "exec-calls-skipped.log");
+    const execScriptPath = path.join(fixture.rootDir, "resolver-skipped.sh");
+    await writeExecResolverShellScript({
+      scriptPath: execScriptPath,
+      logPath: execLogPath,
+      values: {
+        "providers/openai/apiKey": "value:providers/openai/apiKey",
+      },
+    });
+    await writeExecSecretsAuditConfig({
+      fixture,
       execScriptPath,
-      [
-        "#!/bin/sh",
-        `printf 'x\\n' >> ${JSON.stringify(execLogPath)}`,
-        "cat >/dev/null",
-        'printf \'{"protocolVersion":1,"values":{"providers/openai/apiKey":"value:providers/openai/apiKey","providers/moonshot/apiKey":"value:providers/moonshot/apiKey"}}\'', // pragma: allowlist secret
-      ].join("\n"),
-      { encoding: "utf8", mode: 0o700 },
-    );
-
-    await writeJsonFile(fixture.configPath, {
-      secrets: {
-        providers: {
-          execmain: {
-            source: "exec",
-            command: execScriptPath,
-            jsonOnly: true,
-            timeoutMs: 20_000,
-            noOutputTimeoutMs: 10_000,
-          },
+      providers: [
+        {
+          id: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          modelId: "gpt-5",
+          modelName: "gpt-5",
         },
-      },
-      models: {
-        providers: {
-          openai: {
-            baseUrl: "https://api.openai.com/v1",
-            api: "openai-completions",
-            apiKey: { source: "exec", provider: "execmain", id: "providers/openai/apiKey" },
-            models: [{ id: "gpt-5", name: "gpt-5" }],
-          },
-          moonshot: {
-            baseUrl: "https://api.moonshot.cn/v1",
-            api: "openai-completions",
-            apiKey: { source: "exec", provider: "execmain", id: "providers/moonshot/apiKey" },
-            models: [{ id: "moonshot-v1-8k", name: "moonshot-v1-8k" }],
-          },
-        },
-      },
+      ],
     });
     await fs.rm(fixture.authStorePath, { force: true });
     await fs.writeFile(fixture.envPath, "", "utf8");
 
     const report = await runSecretsAudit({ env: fixture.env });
+    expect(report.resolution.resolvabilityComplete).toBe(false);
+    expect(report.resolution.skippedExecRefs).toBe(1);
+    expect(report.summary.unresolvedRefCount).toBe(0);
+    await expect(fs.stat(execLogPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("batches ref resolution per provider during audit when --allow-exec is enabled", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    const execLogPath = path.join(fixture.rootDir, "exec-calls.log");
+    const execScriptPath = path.join(fixture.rootDir, "resolver.sh");
+    await writeExecResolverShellScript({
+      scriptPath: execScriptPath,
+      logPath: execLogPath,
+      values: {
+        "providers/openai/apiKey": "value:providers/openai/apiKey",
+        "providers/moonshot/apiKey": "value:providers/moonshot/apiKey",
+      },
+    });
+    await writeExecSecretsAuditConfig({
+      fixture,
+      execScriptPath,
+      providers: [
+        {
+          id: "openai",
+          baseUrl: "https://api.openai.com/v1",
+          modelId: "gpt-5",
+          modelName: "gpt-5",
+        },
+        {
+          id: "moonshot",
+          baseUrl: "https://api.moonshot.cn/v1",
+          modelId: "moonshot-v1-8k",
+          modelName: "moonshot-v1-8k",
+        },
+      ],
+    });
+    await fs.rm(fixture.authStorePath, { force: true });
+    await fs.writeFile(fixture.envPath, "", "utf8");
+
+    const report = await runSecretsAudit({ env: fixture.env, allowExec: true });
     expect(report.summary.unresolvedRefCount).toBe(0);
 
     const callLog = await fs.readFile(execLogPath, "utf8");
-    const callCount = callLog.split("\n").filter((line) => line.trim().length > 0).length;
+    const callCount = countNonEmptyLines(callLog);
     expect(callCount).toBe(1);
   });
 
-  it("short-circuits per-ref fallback for provider-wide batch failures", async () => {
+  it("short-circuits per-ref fallback for provider-wide batch failures when --allow-exec is enabled", async () => {
     if (process.platform === "win32") {
       return;
     }
@@ -303,11 +404,11 @@ describe("secrets audit", () => {
     await fs.rm(fixture.authStorePath, { force: true });
     await fs.writeFile(fixture.envPath, "", "utf8");
 
-    const report = await runSecretsAudit({ env: fixture.env });
+    const report = await runSecretsAudit({ env: fixture.env, allowExec: true });
     expect(report.summary.unresolvedRefCount).toBeGreaterThanOrEqual(2);
 
     const callLog = await fs.readFile(execLogPath, "utf8");
-    const callCount = callLog.split("\n").filter((line) => line.trim().length > 0).length;
+    const callCount = countNonEmptyLines(callLog);
     expect(callCount).toBe(1);
   });
 

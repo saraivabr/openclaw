@@ -1,11 +1,22 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function withOpenRouterStateDir(run: (stateDir: string) => Promise<void>) {
   const stateDir = mkdtempSync(join(tmpdir(), "openclaw-openrouter-capabilities-"));
   process.env.OPENCLAW_STATE_DIR = stateDir;
+  for (const key of [
+    "ALL_PROXY",
+    "all_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+  ]) {
+    vi.stubEnv(key, "");
+  }
   try {
     await run(stateDir);
   } finally {
@@ -13,9 +24,15 @@ async function withOpenRouterStateDir(run: (stateDir: string) => Promise<void>) 
   }
 }
 
+async function importOpenRouterModelCapabilities(scope: string) {
+  return await importFreshModule<typeof import("./openrouter-model-capabilities.js")>(
+    import.meta.url,
+    `./openrouter-model-capabilities.js?scope=${scope}`,
+  );
+}
+
 describe("openrouter-model-capabilities", () => {
   afterEach(() => {
-    vi.resetModules();
     vi.unstubAllGlobals();
     delete process.env.OPENCLAW_STATE_DIR;
   });
@@ -56,21 +73,20 @@ describe("openrouter-model-capabilities", () => {
         ),
       );
 
-      const module = await import("./openrouter-model-capabilities.js");
+      const module = await importOpenRouterModelCapabilities("top-level-max-tokens");
       await module.loadOpenRouterModelCapabilities("acme/top-level-max-completion");
 
-      expect(module.getOpenRouterModelCapabilities("acme/top-level-max-completion")).toMatchObject({
-        input: ["text", "image"],
-        reasoning: true,
-        contextWindow: 65432,
-        maxTokens: 12345,
-      });
-      expect(module.getOpenRouterModelCapabilities("acme/top-level-max-output")).toMatchObject({
-        input: ["text", "image"],
-        reasoning: false,
-        contextWindow: 54321,
-        maxTokens: 23456,
-      });
+      const maxCompletion = module.getOpenRouterModelCapabilities("acme/top-level-max-completion");
+      expect(maxCompletion?.input).toEqual(["text", "image"]);
+      expect(maxCompletion?.reasoning).toBe(true);
+      expect(maxCompletion?.contextWindow).toBe(65432);
+      expect(maxCompletion?.maxTokens).toBe(12345);
+
+      const maxOutput = module.getOpenRouterModelCapabilities("acme/top-level-max-output");
+      expect(maxOutput?.input).toEqual(["text", "image"]);
+      expect(maxOutput?.reasoning).toBe(false);
+      expect(maxOutput?.contextWindow).toBe(54321);
+      expect(maxOutput?.maxTokens).toBe(23456);
     });
   });
 
@@ -97,7 +113,7 @@ describe("openrouter-model-capabilities", () => {
       );
       vi.stubGlobal("fetch", fetchSpy);
 
-      const module = await import("./openrouter-model-capabilities.js");
+      const module = await importOpenRouterModelCapabilities("awaited-miss");
       await module.loadOpenRouterModelCapabilities("acme/missing-model");
       expect(module.getOpenRouterModelCapabilities("acme/missing-model")).toBeUndefined();
       expect(fetchSpy).toHaveBeenCalledTimes(1);

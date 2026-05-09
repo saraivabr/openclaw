@@ -1,6 +1,7 @@
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEnv } from "../runtime.js";
+import { onboardCommand, setupWizardCommand } from "./onboard.js";
 
 const mocks = vi.hoisted(() => ({
   runInteractiveSetup: vi.fn(async () => {}),
@@ -25,8 +26,6 @@ vi.mock("./onboard-helpers.js", () => ({
   DEFAULT_WORKSPACE: "~/.openclaw/workspace",
   handleReset: mocks.handleReset,
 }));
-
-const { onboardCommand, setupWizardCommand } = await import("./onboard.js");
 
 function makeRuntime(): RuntimeEnv {
   return {
@@ -53,8 +52,9 @@ describe("setupWizardCommand", () => {
     );
 
     expect(runtime.error).toHaveBeenCalledWith(
-      'Invalid --secret-input-mode. Use "plaintext" or "ref".',
+      expect.stringContaining('Invalid --secret-input-mode. Use "plaintext" or "ref", or run '),
     );
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("onboard"));
     expect(runtime.exit).toHaveBeenCalledWith(1);
     expect(mocks.runInteractiveSetup).not.toHaveBeenCalled();
     expect(mocks.runNonInteractiveSetup).not.toHaveBeenCalled();
@@ -151,8 +151,11 @@ describe("setupWizardCommand", () => {
     );
 
     expect(runtime.error).toHaveBeenCalledWith(
-      'Invalid --reset-scope. Use "config", "config+creds+sessions", or "full".',
+      expect.stringContaining(
+        'Invalid --reset-scope. Use "config", "config+creds+sessions", or "full".',
+      ),
     );
+    expect(runtime.error).toHaveBeenCalledWith(expect.stringContaining("config-only reset"));
     expect(runtime.exit).toHaveBeenCalledWith(1);
     expect(mocks.handleReset).not.toHaveBeenCalled();
     expect(mocks.runInteractiveSetup).not.toHaveBeenCalled();
